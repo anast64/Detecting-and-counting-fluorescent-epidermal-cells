@@ -1,0 +1,92 @@
+"""
+Cell Detect count takes in a single image file and performs watershed
+to separate cells then maps contours to foreground objects. Foreground
+objects have area, perimeter, and circularity extracted from them to 
+compare with set thresholds based on distribution of features from skin
+cells. Only the contours with features that match skin cells will be drawn
+on the original image to highlight which objects are being counted
+as cells.
+"""
+import cv2
+import numpy as np
+
+# Create two windows, one to show original unprocessed image and one to display highlighted contours
+cv2.namedWindow('SampleImg', cv2.WINDOW_NORMAL)
+cv2.namedWindow('Processed', cv2.WINDOW_NORMAL)
+
+# Define watershed function to separate clumped cells
+def watershed(image):
+    # convert input image to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # Apply binary thresholding to create binary image
+    ret, thresh = cv2.threshold(gray, 100, 255, cv2.THRESH_BINARY)
+    
+    # Finding the sure background area by dilating foreground objects.
+    kernel = np.ones((3, 3), np.uint8)
+    sure_bg = cv2.dilate(thresh, kernel, iterations=3)
+
+    # Finding sure foreground area using distance transform and thresholding it
+    dist_trans = cv2.distanceTransform(thresh, cv2.DIST_L2, 5)
+    ret, sure_fg = cv2.threshold(dist_trans, 0.05 * dist_trans.max(), 255, 0)
+
+    # Find unknown region by subtracting sure foreground from sure background
+    sure_fg = np.uint8(sure_fg)
+    unknown = cv2.subtract(sure_bg, sure_fg)
+
+    # Label markers for the connected components in the sure foreground
+    ret, markers = cv2.connectedComponents(sure_fg)
+    markers += 1  # Increment labels by 1 so that sure_bg is 1
+    markers[unknown == 255] = 0  # Mark the region of unknown with 0
+
+    # Apply watershed algorithm to segment the objects in the image
+    markers = cv2.watershed(image, markers)
+    image[markers == -1] = [255, 0, 0]  # Mark watershed boundaries with red color
+
+    # Find contours from the sure foreground and return them
+    contours, _ = cv2.findContours(sure_fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    return contours
+
+# get the path/directory of the image file, in this case using example attached to repo
+img_dir = "C:/Users/anast/Documents/Semester 1 Hns/ENGR7761 Computer Vision/Detect_and_count/Images/Fibre.bmp"
+img = cv2.imread(img_dir)
+
+# Create copy of original image
+img_copy = img.copy()
+# Apply watershed algorithm to copied image to find objects
+contours = watershed(img_copy)
+
+# Initialize lists to store features
+features = []
+cell_contours = []
+
+# Extract features for every contour detected in image
+for cnt in contours:
+    area = cv2.contourArea(cnt) # Calc area of contour
+    perimeter = cv2.arcLength(cnt, True) # Calc perimeter of contour
+    perimeter = round(perimeter, 4) # Round perimeter to 4 decimal pts
+
+    # Calc circularity of contour
+    if perimeter == 0:
+        # Assume contour is a dot (perfect circle)
+        circularity = 1
+    else:
+        circularity = (4 * np.pi * area) / (perimeter ** 2)
+
+    # Append features to respective arrays if they meet criteria
+    if (area <= 40):
+        if (perimeter <= 45):
+            if (circularity >= 0.4):
+                cell_contours.append(cnt) # Add contour to the list of cell contours
+
+                # Create feature vector with area, perimeter, and circularity
+                feature_vector = [area, perimeter, circularity]
+                features.append(feature_vector) # Add the feature vector to features list
+
+                # Draw cell contours on the copied image in red
+                cv2.drawContours(img_copy, [cnt], -1, (0,0,255), 3)
+
+# Show the original and processed images
+cv2.imshow('SampleImg', img)
+cv2.imshow('Processed', img_copy)
+cv2.waitKey(0)
+cv2.destroyAllWindows()
